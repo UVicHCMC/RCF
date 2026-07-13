@@ -17,4 +17,6 @@ https://fr.wikisource.org/w/api.php?action=parse&page={Text URI}&prop=text&forma
 So, for the example above, you would use the following link to get the JSON file: 
 https://fr.wikisource.org/w/api.php?action=parse&page=Mercure_galant,_juin,_juillet_et_ao%C3%BBt_1710/Texte_entier&prop=text&format=json
 
+For more information on the WikiSource API, see https://en.wikisource.org/w/api.php
+
 You can then use the python script to convert the JSON file to XML. 
