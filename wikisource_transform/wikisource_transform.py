@@ -64,6 +64,61 @@ def is_low_size_centered_italic_heading(div):
     )
 
 
+def _has_block_descendant(el):
+    """Return whether *el* contains another block-level content element.
+
+    A number of Wikisource layout wrappers are divs which contain paragraphs,
+    figures, or tables.  Those wrappers must not be emitted themselves: their
+    text would duplicate the text emitted from their children.
+    """
+    return bool(el.xpath(".//p | .//div | .//figure | .//table | .//ol"))
+
+
+def semantic_div_level(div):
+    """Classify text-only layout divs which carry meaningful book content.
+
+    Some Wikisource transcriptions use plain centered divs for speaker labels and section headings rather than
+    bold or enlarged text.  The original converter intentionally ignored
+    these because most divs are layout noise.
+    Restricting this fallback to text-only divs avoids re-emitting wrapper content.
+    """
+    if _has_block_descendant(div):
+        return None
+
+    text = "".join(div.itertext()).strip()
+    if not text:
+        return None
+
+    style = div.get("style", "") or ""
+    classes = set((div.get("class", "") or "").split())
+    centered = "text-align:center" in style
+    title_block = (
+        "width:450px" in style
+        and "margin:auto" in style
+        and len(text) >= 100
+    )
+
+    if title_block:
+        return "t"
+    if "alinea" in classes:
+        return "p"
+    if centered:
+        fs = get_font_size_pct(style)
+        if fs is not None and fs >= T_FONT_SIZE_MIN:
+            return "t"
+        return "st"
+    if "float:right" in style:
+        return "st"
+    return None
+
+
+def is_title_page_container(div):
+    """Recognize a title-page wrapper whose meaningful blocks are nested."""
+    style = div.get("style", "") or ""
+    text = "".join(div.itertext()).strip()
+    return "width:450px" in style and "margin:auto" in style and len(text) >= 100
+
+
 def clean_text(s):
     s = s.replace(NBSP, " ")
     s = re.sub(r"\s+\n", "\n", s)
@@ -116,6 +171,14 @@ def build_inline(src_el, notes_by_id, dest_parent):
             e = etree.SubElement(dest_parent, "i")
             build_inline(child, notes_by_id, e)
             append_text(child.tail)
+            continue
+
+        if tag == "br":
+            # Inline line breaks are formatting from the source transcription,
+            # not paragraph boundaries.  Since the target XML flattens them,
+            # retain the word boundary they represented.
+            append_text(" ")
+            append_text((child.tail or "").lstrip())
             continue
 
         if tag == "sup" and "reference" in cls:
@@ -340,6 +403,34 @@ def process(tree, out_root):
             last_heading_tag = level_tag
             i += 1
             continue
+
+        # Some books use plain text-only divs for headings,
+        # speaker labels, title pages, and publication details.  They have no
+        # bold/italic/font-size signal, so the stricter heading checks above
+        # cannot recognize them.  Only accept semantic, text-only divs here;
+        # generic wrappers containing paragraphs or figures remain ignored.
+        if tag == "div":
+            if is_title_page_container(el):
+                # Some title pages put each visible line in a nested div
+                # inside one fixed-width wrapper.  The wrapper itself is
+                # layout, but its text-only descendants are real headings.
+                for nested in el.xpath(".//div"):
+                    level_tag = semantic_div_level(nested)
+                    if level_tag is None:
+                        continue
+                    node = etree.SubElement(out_root, level_tag)
+                    build_inline(nested, notes_by_id, node)
+                    last_heading_tag = None if level_tag == "p" else level_tag
+                i += 1
+                continue
+
+            level_tag = semantic_div_level(el)
+            if level_tag is not None:
+                node = etree.SubElement(out_root, level_tag)
+                build_inline(el, notes_by_id, node)
+                last_heading_tag = None if level_tag == "p" else level_tag
+                i += 1
+                continue
 
         if tag == "p":
             txt_probe = "".join(el.itertext()).strip()
