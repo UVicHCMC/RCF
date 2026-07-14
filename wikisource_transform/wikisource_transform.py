@@ -48,6 +48,22 @@ def is_centered_bold_heading(div):
     return bool(has_bold or fs)
 
 
+def is_low_size_centered_italic_heading(div):
+    """Recognize small centered headings that Wikisource marks only with italics.
+
+    Some headings use the default 100% font
+    size, so the font-size thresholds below cannot classify them.  The
+    heading-like bottom margin distinguishes these from centered layout text.
+    """
+    style = div.get("style", "")
+    return (
+        "text-align:center" in style
+        and "margin-bottom:" in style
+        and div.find(".//i") is not None
+        and "".join(div.itertext()).strip()
+    )
+
+
 def clean_text(s):
     s = s.replace(NBSP, " ")
     s = re.sub(r"\s+\n", "\n", s)
@@ -303,12 +319,17 @@ def process(tree, out_root):
             i += 1
             continue
 
-        if tag == "div" and is_centered_bold_heading(el):
+        if tag == "div" and (
+            is_centered_bold_heading(el) or is_low_size_centered_italic_heading(el)
+        ):
             fs = get_font_size_pct(el.get("style", "")) or 0
             level_tag = "t" if fs >= T_FONT_SIZE_MIN else ("st" if fs >= ST_FONT_SIZE_MIN else None)
             if level_tag is None:
-                i += 1
-                continue
+                if is_low_size_centered_italic_heading(el):
+                    level_tag = "st"
+                else:
+                    i += 1
+                    continue
             if level_tag == last_heading_tag and len(out_root) > 0:
                 node = out_root[-1]
                 if (node.text or "").strip():
